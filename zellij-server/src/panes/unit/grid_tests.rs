@@ -4047,4 +4047,8 @@ fn copy_preserves_multiple_tabs_in_line() {
         "a\tb\tc\td",
         "Selected text should preserve tabs without padding spaces"
     );
+
+    // Verify the visual output is correct via snapshot
+    // This ensures tabs still render with proper visual spacing
+    assert_snapshot!(format!("{:?}", grid));
 }
