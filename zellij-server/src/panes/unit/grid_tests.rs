@@ -4052,3 +4052,203 @@ fn copy_preserves_multiple_tabs_in_line() {
     // This ensures tabs still render with proper visual spacing
     assert_snapshot!(format!("{:?}", grid));
 }
+
+#[test]
+fn copy_preserves_variable_width_tabs() {
+    // Test that tabs with DIFFERENT visual widths are handled correctly
+    // Tabs advance to the next tabstop, so their visual width depends on cursor position:
+    // - "a\tx" -> tab spans 7 columns (col 1 -> col 8)
+    // - "aaaa\tx" -> tab spans 4 columns (col 4 -> col 8)
+    // - "aaaaaaa\tx" -> tab spans 1 column (col 7 -> col 8)
+    let mut vte_parser = vte::Parser::new();
+    let sixel_image_store = Rc::new(RefCell::new(SixelImageStore::default()));
+    let terminal_emulator_color_codes = Rc::new(RefCell::new(HashMap::new()));
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        10,
+        80,
+        Rc::new(RefCell::new(Palette::default())),
+        terminal_emulator_color_codes,
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        sixel_image_store,
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+
+    // Three lines with tabs at different positions (different visual widths)
+    // Line 1: "a\tx" - tab after 1 char (7 cols visual width)
+    // Line 2: "aaaa\tx" - tab after 4 chars (4 cols visual width)
+    // Line 3: "aaaaaaa\tx" - tab after 7 chars (1 col visual width)
+    let content = "a\tx\r\naaaa\tx\r\naaaaaaa\tx".as_bytes();
+    for byte in content {
+        vte_parser.advance(&mut grid, *byte);
+    }
+
+    // Select all three lines
+    grid.start_selection(&Position::new(0, 0));
+    grid.end_selection(&Position::new(2, 80));
+
+    let text = grid.get_selected_text();
+    assert!(text.is_some(), "Selection should not be empty");
+
+    let selected_text = text.unwrap();
+
+    // Should have exactly 3 tabs (one per line)
+    let tab_count = selected_text.chars().filter(|&c| c == '\t').count();
+    assert_eq!(tab_count, 3, "Should have 3 tabs, got: {:?}", selected_text);
+
+    // Each line should have tab WITHOUT padding spaces
+    // Total chars: "a\tx" (3) + "\n" (1) + "aaaa\tx" (6) + "\n" (1) + "aaaaaaa\tx" (9) = 20
+    assert_eq!(
+        selected_text.len(),
+        20,
+        "Should be 20 chars without padding spaces, got {} in: {:?}",
+        selected_text.len(),
+        selected_text
+    );
+
+    // Verify no padding spaces after any tab
+    assert!(
+        !selected_text.contains("\t "),
+        "Should not have padding spaces after tabs: {:?}",
+        selected_text
+    );
+
+    // Verify exact content
+    assert_eq!(
+        selected_text,
+        "a\tx\naaaa\tx\naaaaaaa\tx",
+        "Content should match original with tabs preserved"
+    );
+
+    // Snapshot verifies visual alignment: 'x' should be at column 8 on all lines
+    assert_snapshot!(format!("{:?}", grid));
+}
+
+#[test]
+fn copy_preserves_tabs_with_custom_tabstops() {
+    // Test that tabs are preserved when using custom tabstops (set via ESC H)
+    let mut vte_parser = vte::Parser::new();
+    let sixel_image_store = Rc::new(RefCell::new(SixelImageStore::default()));
+    let terminal_emulator_color_codes = Rc::new(RefCell::new(HashMap::new()));
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        10,
+        80,
+        Rc::new(RefCell::new(Palette::default())),
+        terminal_emulator_color_codes,
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        sixel_image_store,
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+
+    // Clear default tabstops and set custom tabstop at column 4
+    // \x1b[3g clears all tabstops, then we move cursor and set a tabstop with ESC H
+    // Then type "ab", tab (which should go to column 4), and "cd"
+    let content = "\x1b[3g\x1b[4G\x1bH\x1b[1Gab\tcd".as_bytes();
+    for byte in content {
+        vte_parser.advance(&mut grid, *byte);
+    }
+
+    grid.start_selection(&Position::new(0, 0));
+    grid.end_selection(&Position::new(0, 80));
+
+    let text = grid.get_selected_text();
+    assert!(text.is_some(), "Selection should not be empty");
+
+    let selected_text = text.unwrap();
+
+    // Should have: "ab" + tab + "cd"
+    // The tab should advance from column 2 to column 4 (custom tabstop)
+    assert!(
+        selected_text.contains('\t'),
+        "Selected text should contain tab character, got: {:?}",
+        selected_text
+    );
+
+    assert_eq!(
+        selected_text.trim(),
+        "ab\tcd",
+        "Content should be ab<tab>cd"
+    );
+}
+
+#[test]
+fn tabs_render_correctly_after_tabstop_change() {
+    // Test that:
+    // 1. First tab uses original tabstops (default at 8)
+    // 2. Changing tabstops doesn't affect already-rendered content
+    // 3. Second tab uses new tabstop positions
+    let mut vte_parser = vte::Parser::new();
+    let sixel_image_store = Rc::new(RefCell::new(SixelImageStore::default()));
+    let terminal_emulator_color_codes = Rc::new(RefCell::new(HashMap::new()));
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        10,
+        40,
+        Rc::new(RefCell::new(Palette::default())),
+        terminal_emulator_color_codes,
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        sixel_image_store,
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+
+    // Sequence on two lines to avoid cursor movement padding:
+    // Line 1: "a\tb" - 'a' at col 0, tab to col 8 (default tabstop), 'b' at col 8
+    // Then newline and clear tabstops, set new tabstop at col 4
+    // Line 2: "x\ty" - 'x' at col 0, tab to col 4 (new tabstop), 'y' at col 4
+    let content = "a\tb\r\n\x1b[3g\x1b[4G\x1bH\x1b[1Gx\ty".as_bytes();
+    for byte in content {
+        vte_parser.advance(&mut grid, *byte);
+    }
+
+    // Verify visual layout with snapshot
+    assert_snapshot!(format!("{:?}", grid));
+
+    // Verify copying preserves tabs on both lines
+    grid.start_selection(&Position::new(0, 0));
+    grid.end_selection(&Position::new(1, 40));
+
+    let text = grid.get_selected_text();
+    assert!(text.is_some(), "Selection should not be empty");
+
+    let selected_text = text.unwrap();
+
+    // Should have 2 tabs (one per line)
+    let tab_count = selected_text.chars().filter(|&c| c == '\t').count();
+    assert_eq!(
+        tab_count, 2,
+        "Should have 2 tab characters, got {} in: {:?}",
+        tab_count, selected_text
+    );
+
+    // First line: tab goes to col 8 (default)
+    // Second line: tab goes to col 4 (custom tabstop)
+    let lines: Vec<&str> = selected_text.lines().collect();
+    assert_eq!(lines.len(), 2, "Should have 2 lines");
+    assert_eq!(lines[0], "a\tb", "First line should be a<tab>b");
+    assert_eq!(lines[1], "x\ty", "Second line should be x<tab>y");
+}

@@ -1,0 +1,16 @@
+---
+source: zellij-server/src/panes/./unit/grid_tests.rs
+assertion_line: 4132
+expression: "format!(\"{:?}\", grid)"
+---
+00 (C): a	x
+01 (C): aaaa	x
+02 (C): aaaaaaa	x
+03 (C): 
+04 (C): 
+05 (C): 
+06 (C): 
+07 (C): 
+08 (C): 
+09 (C): 
+
