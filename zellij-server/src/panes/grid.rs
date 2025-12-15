@@ -561,6 +561,9 @@ impl Grid {
         self.output_buffer.update_line(line_index);
     }
     pub fn advance_to_next_tabstop(&mut self, styles: RcCharacterStyles) {
+        // Remember where the tab character should be placed (current cursor position)
+        let tab_position = self.cursor.x;
+
         let next_tabstop = self
             .horizontal_tabstops
             .iter()
@@ -574,9 +577,49 @@ impl Grid {
                 self.cursor.x = self.width.saturating_sub(1);
             },
         }
+
+        // Calculate the visual width of this tab (columns from tab_position to tabstop)
+        let tab_visual_width = self.cursor.x.saturating_sub(tab_position).max(1) as u8;
+
         let mut empty_character = EMPTY_TERMINAL_CHARACTER;
-        empty_character.styles = styles;
-        self.pad_current_line_until(self.cursor.x, empty_character);
+        empty_character.styles = styles.clone();
+
+        // Ensure line exists before padding
+        if self.viewport.get(self.cursor.y).is_none() {
+            self.pad_lines_until(self.cursor.y, empty_character.clone());
+        }
+
+        // Store a tab character with its visual width - no padding spaces needed
+        if let Some(current_row) = self.viewport.get_mut(self.cursor.y) {
+            let current_width = current_row.width();
+
+            if current_width <= tab_position {
+                // Row hasn't reached tab position yet - pad to tab position, then push tab
+                for _ in current_width..tab_position {
+                    current_row.push(empty_character.clone());
+                }
+                let tab_character =
+                    TerminalCharacter::new_with_width('\t', styles, tab_visual_width);
+                current_row.push(tab_character);
+            } else {
+                // Row has content at or past tab_position
+                // Check if the character at tab_position is a space (padding) - if so, replace with tab
+                let char_at_tab_pos = current_row.columns.get(tab_position).map(|c| c.character);
+                if char_at_tab_pos == Some(' ') {
+                    let tab_character =
+                        TerminalCharacter::new_with_width('\t', styles, tab_visual_width);
+                    current_row.columns[tab_position] = tab_character;
+                    // Remove the old padding spaces that followed
+                    let spaces_to_remove = (self.cursor.x - tab_position).saturating_sub(1);
+                    for _ in 0..spaces_to_remove {
+                        if current_row.columns.len() > tab_position + 1 {
+                            current_row.columns.remove(tab_position + 1);
+                        }
+                    }
+                    current_row.width = None; // Invalidate cached width
+                }
+            }
+        }
         self.output_buffer.update_line(self.cursor.y);
     }
     pub fn move_to_previous_tabstop(&mut self) {
@@ -1899,6 +1942,7 @@ impl Grid {
             let mut terminal_col = 0;
             for terminal_character in &row.columns {
                 if (start_column..end_column).contains(&terminal_col) {
+                    // Tab characters store their visual width, no padding spaces to skip
                     line_selection.push(terminal_character.character);
                 }
 

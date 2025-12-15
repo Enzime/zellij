@@ -963,6 +963,15 @@ impl TerminalCharacter {
         }
     }
 
+    #[inline]
+    pub fn new_with_width(character: char, styles: RcCharacterStyles, width: u8) -> Self {
+        TerminalCharacter {
+            character,
+            styles,
+            width,
+        }
+    }
+
     pub fn width(&self) -> usize {
         self.width as usize
     }
