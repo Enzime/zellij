@@ -4133,6 +4133,72 @@ fn copy_preserves_variable_width_tabs() {
 }
 
 #[test]
+fn copy_preserves_mix_of_tabs_and_spaces() {
+    // Test that explicit spaces are preserved alongside tabs
+    // Spaces before tabs, after tabs, and between tabs should all be copied correctly
+    let mut vte_parser = vte::Parser::new();
+    let sixel_image_store = Rc::new(RefCell::new(SixelImageStore::default()));
+    let terminal_emulator_color_codes = Rc::new(RefCell::new(HashMap::new()));
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        10,
+        80,
+        Rc::new(RefCell::new(Palette::default())),
+        terminal_emulator_color_codes,
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        sixel_image_store,
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+
+    // Test various combinations of spaces and tabs:
+    // Line 1: "  \thello" - 2 spaces before tab, then text
+    // Line 2: "hi\t  world" - text, tab, 2 spaces, then text
+    // Line 3: "a  b\tc" - text with spaces in middle, then tab, then text
+    let content = "  \thello\r\nhi\t  world\r\na  b\tc".as_bytes();
+    for byte in content {
+        vte_parser.advance(&mut grid, *byte);
+    }
+
+    grid.start_selection(&Position::new(0, 0));
+    grid.end_selection(&Position::new(2, 80));
+
+    let text = grid.get_selected_text();
+    assert!(text.is_some(), "Selection should not be empty");
+
+    let selected_text = text.unwrap();
+
+    // Verify each line preserves the correct mix of spaces and tabs
+    let lines: Vec<&str> = selected_text.lines().collect();
+    assert_eq!(lines.len(), 3, "Should have 3 lines");
+
+    // Line 1: "  \thello" - 2 leading spaces + tab + "hello"
+    assert_eq!(
+        lines[0], "  \thello",
+        "Line 1 should preserve leading spaces before tab"
+    );
+
+    // Line 2: "hi\t  world" - "hi" + tab + 2 spaces + "world"
+    assert_eq!(
+        lines[1], "hi\t  world",
+        "Line 2 should preserve spaces after tab"
+    );
+
+    // Line 3: "a  b\tc" - "a" + 2 spaces + "b" + tab + "c"
+    assert_eq!(
+        lines[2], "a  b\tc",
+        "Line 3 should preserve spaces between characters and tab"
+    );
+}
+
+#[test]
 fn copy_preserves_tabs_with_custom_tabstops() {
     // Test that tabs are preserved when using custom tabstops (set via ESC H)
     let mut vte_parser = vte::Parser::new();
