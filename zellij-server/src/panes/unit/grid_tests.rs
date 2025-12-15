@@ -3900,3 +3900,151 @@ fn cannot_escape_scroll_region() {
     }
     assert_snapshot!(format!("{:?}", grid));
 }
+
+#[test]
+fn copy_preserves_tab_characters() {
+    // Test that copying text from the grid preserves tab characters
+    // instead of converting them to spaces
+    let mut vte_parser = vte::Parser::new();
+    let sixel_image_store = Rc::new(RefCell::new(SixelImageStore::default()));
+    let terminal_emulator_color_codes = Rc::new(RefCell::new(HashMap::new()));
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        10,
+        80,
+        Rc::new(RefCell::new(Palette::default())),
+        terminal_emulator_color_codes,
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        sixel_image_store,
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+
+    // Feed input with tab characters using \r\n for proper line breaks
+    // "hello\tworld" on first line, "another\tline" on second line
+    let content = "hello\tworld\r\nanother\tline".as_bytes();
+    for byte in content {
+        vte_parser.advance(&mut grid, *byte);
+    }
+
+    // Select all the text (both lines)
+    grid.start_selection(&Position::new(0, 0));
+    grid.end_selection(&Position::new(1, 80));
+
+    let text = grid.get_selected_text();
+    assert!(text.is_some(), "Selection should not be empty");
+
+    let selected_text = text.unwrap();
+
+    // Verify that tab characters are preserved, not converted to spaces
+    assert!(
+        selected_text.contains('\t'),
+        "Selected text should contain tab characters, got: {:?}",
+        selected_text
+    );
+
+    // Count tabs - should have exactly 2 (one per line)
+    let tab_count = selected_text.chars().filter(|&c| c == '\t').count();
+    assert_eq!(
+        tab_count, 2,
+        "Should have exactly 2 tab characters, got {} in: {:?}",
+        tab_count, selected_text
+    );
+
+    // Verify the content contains the expected text with tabs
+    assert!(
+        selected_text.contains("hello\tworld"),
+        "First line should contain 'hello<tab>world', got: {:?}",
+        selected_text
+    );
+    assert!(
+        selected_text.contains("another\tline"),
+        "Second line should contain 'another<tab>line', got: {:?}",
+        selected_text
+    );
+}
+
+#[test]
+fn copy_preserves_multiple_tabs_in_line() {
+    // Test that multiple tabs are preserved AND padding spaces are NOT copied
+    let mut vte_parser = vte::Parser::new();
+    let sixel_image_store = Rc::new(RefCell::new(SixelImageStore::default()));
+    let terminal_emulator_color_codes = Rc::new(RefCell::new(HashMap::new()));
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+    let mut grid = Grid::new(
+        10,
+        80,
+        Rc::new(RefCell::new(Palette::default())),
+        terminal_emulator_color_codes,
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        sixel_image_store,
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        explicitly_disable_kitty_keyboard_protocol,
+    );
+
+    // Feed input with multiple tabs: "a\tb\tc\td"
+    // With default tabstop of 8, this displays as:
+    // "a       b       c       d" (at columns 0, 8, 16, 24)
+    // Internally stored as: 'a', '\t', ' '×6, 'b', '\t', ' '×6, 'c', '\t', ' '×6, 'd'
+    // When copied, padding spaces should be skipped, yielding: "a\tb\tc\td"
+    let content = "a\tb\tc\td".as_bytes();
+    for byte in content {
+        vte_parser.advance(&mut grid, *byte);
+    }
+
+    // Select the line
+    grid.start_selection(&Position::new(0, 0));
+    grid.end_selection(&Position::new(0, 80));
+
+    let text = grid.get_selected_text();
+    assert!(text.is_some(), "Selection should not be empty");
+
+    let selected_text = text.unwrap();
+
+    // Count the number of tabs - should be exactly 3
+    let tab_count = selected_text.chars().filter(|&c| c == '\t').count();
+    assert_eq!(
+        tab_count, 3,
+        "Should have exactly 3 tab characters, got {} in: {:?}",
+        tab_count, selected_text
+    );
+
+    // CRITICAL: Verify that padding spaces are NOT included
+    // The copied text should be exactly "a\tb\tc\td" (7 chars), not
+    // "a\t      b\t      c\t      d" (25 chars with padding spaces)
+    assert_eq!(
+        selected_text.len(),
+        7,
+        "Selected text should be exactly 7 characters (no padding spaces), got {} chars: {:?}",
+        selected_text.len(),
+        selected_text
+    );
+
+    // Verify there are no spaces after tabs (which would indicate padding wasn't skipped)
+    assert!(
+        !selected_text.contains("\t "),
+        "Should not have spaces after tabs (padding should be skipped), got: {:?}",
+        selected_text
+    );
+
+    // Verify the exact content matches input without padding
+    assert_eq!(
+        selected_text,
+        "a\tb\tc\td",
+        "Selected text should preserve tabs without padding spaces"
+    );
+}
